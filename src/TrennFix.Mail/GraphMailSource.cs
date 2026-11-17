@@ -53,14 +53,15 @@ public sealed class GraphMailSource(GraphSettings settings, IReadOnlyList<string
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
     }
 
-    public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, [EnumeratorCancellation] CancellationToken ct)
+    public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, DateTimeOffset? until, [EnumeratorCancellation] CancellationToken ct)
     {
         var folderList = await ResolveFoldersAsync(ct);
         var sinceIso = since.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ");
+        var untilFilter = until is { } u ? $" and receivedDateTime lt {u.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}" : "";
 
         foreach (var (folderId, folderName) in folderList)
         {
-            string? url = $"{Base}/mailFolders/{folderId}/messages?$filter=receivedDateTime ge {sinceIso} and hasAttachments eq true" +
+            string? url = $"{Base}/mailFolders/{folderId}/messages?$filter=receivedDateTime ge {sinceIso}{untilFilter} and hasAttachments eq true" +
                           "&$select=id,subject,from,receivedDateTime,internetMessageId&$orderby=receivedDateTime&$top=50";
             while (url is not null)
             {

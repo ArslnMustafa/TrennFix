@@ -84,7 +84,8 @@
                         <Button DockPanel.Dock="Right" Margin="6,0,0,0" Click="OnBrowseArchive">…</Button>
                         <TextBox x:Name="ArchiveRoot"/>
                     </DockPanel>
-                    <CheckBox x:Name="SaveMail" Margin="0,10,0,0">Original-Mail mit ablegen (.msg / .eml)</CheckBox>
+                    <CheckBox x:Name="AutoSave" Margin="0,10,0,0">PDFs nach dem Abruf sofort speichern (sonst über "PDFs speichern")</CheckBox>
+                    <CheckBox x:Name="SaveMail" Margin="0,6,0,0">Original-Mail mit ablegen (.msg / .eml)</CheckBox>
                     <CheckBox x:Name="OcrEnabled" Margin="0,6,0,0">Texterkennung (OCR) für gescannte PDFs</CheckBox>
 
                     <TextBlock Margin="0,14,0,0">Erster Abruf ab (nur beim allerersten Abruf):</TextBlock>

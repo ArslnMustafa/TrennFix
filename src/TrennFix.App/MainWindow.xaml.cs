@@ -62,8 +62,18 @@ public partial class MainWindow : Window
         _view = CollectionViewSource.GetDefaultView(_rows);
         _view.Filter = o => o is InvoiceRow row && FilterRow(row);
         Grid.ItemsSource = _view;
+        ResetDateRange();
         UpdateStatus();
     }
+
+    /// <summary>Default period: from the last scan until today.</summary>
+    private void ResetDateRange()
+    {
+        FromDate.SelectedDate = ScanService.DefaultFrom(_settings).LocalDateTime.Date;
+        ToDate.SelectedDate = DateTime.Today;
+    }
+
+    private InvoiceArchiver Archiver => new(_db!, new ArchiveService(_settings.ArchiveRoot));
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
@@ -81,6 +91,19 @@ public partial class MainWindow : Window
     private async void OnScan(object sender, RoutedEventArgs e)
     {
         if (_db is null) return;
+        var fromDay = FromDate.SelectedDate ?? ScanService.DefaultFrom(_settings).LocalDateTime.Date;
+        var toDay = ToDate.SelectedDate ?? DateTime.Today;
+        if (toDay < fromDay)
+        {
+            MessageBox.Show(this, "Das Bis-Datum liegt vor dem Von-Datum.", "Zeitraum");
+            return;
+        }
+        // Default start keeps the exact time of the last scan; a manually chosen day starts at 00:00.
+        var defaultFrom = ScanService.DefaultFrom(_settings);
+        var from = fromDay == defaultFrom.LocalDateTime.Date ? defaultFrom : new DateTimeOffset(fromDay);
+        // Up to today → open end (and the scan position is remembered). Earlier day → end of that day.
+        DateTimeOffset? until = toDay >= DateTime.Today ? null : new DateTimeOffset(toDay.AddDays(1));
+
         _cts = new CancellationTokenSource();
         SetBusy(true);
         _log.Clear();
@@ -111,15 +134,17 @@ public partial class MainWindow : Window
             var summary = await Task.Run(async () =>
             {
                 await using var source = CreateMailSource(settings, db, hwnd);
-                return await service.RunAsync(source, progress, ct);
+                return await service.RunAsync(source, from, until, progress, ct);
             }, ct);
 
             if (!summary.Cancelled && summary.InvoicesImported > 0)
             {
                 FilterBox.SelectedIndex = 5; // "Letzter Abruf"
-                if (summary.Warnings > 0)
-                    MessageBox.Show(this, $"{summary.InvoicesImported} Rechnungen archiviert.\n{summary.Warnings} davon bitte prüfen (gelb markiert).",
-                        "Abruf fertig", MessageBoxButton.OK, MessageBoxImage.Information);
+                var saveHint = settings.AutoSaveDocuments ? "" : "\n\nDie PDFs sind noch nicht im Archiv – dafür \"PDFs speichern\" klicken.";
+                MessageBox.Show(this,
+                    $"{summary.InvoicesImported} Rechnungen gefunden." +
+                    (summary.Warnings > 0 ? $"\n{summary.Warnings} davon bitte prüfen (gelb markiert)." : "") + saveHint,
+                    "Abruf fertig", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
         catch (OperationCanceledException)
@@ -156,7 +181,8 @@ public partial class MainWindow : Window
         CancelButton.IsEnabled = busy;
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         Progress.IsIndeterminate = busy;
-        foreach (var b in new[] { ConfirmIbanButton, PaidButton, CheckedButton }) b.IsEnabled = !busy;
+        foreach (var b in new[] { ConfirmIbanButton, PaidButton, CheckedButton, SaveDocsButton, DiscardButton }) b.IsEnabled = !busy;
+        FromDate.IsEnabled = ToDate.IsEnabled = !busy;
     }
 
     private void AddLog(ScanEventLevel level, string text)
@@ -186,6 +212,7 @@ public partial class MainWindow : Window
             3 => r.Data.PaymentMethod == PaymentMethod.Lastschrift,
             4 => !r.Printed && r.Status != InvoiceStatus.Duplikat,
             5 => _lastScanIds.Contains(r.Id),
+            6 => !r.IsSaved,
             _ => true,
         };
     }
@@ -198,7 +225,9 @@ public partial class MainWindow : Window
         var open = all.Where(r => r.Data.PaymentMethod == PaymentMethod.Ueberweisung && r.Status is InvoiceStatus.Ok or InvoiceStatus.Pruefen
                                   && r.Data.Kind == DocumentKind.Rechnung).ToList();
         var check = all.Count(r => r.Status == InvoiceStatus.Pruefen);
-        StatusText.Text = $"{all.Count} Belege   ·   offen per Überweisung: {open.Count} ({open.Sum(r => r.Data.GrossAmount ?? 0):N2} €)   ·   zu prüfen: {check}";
+        var unsaved = all.Count(r => !r.IsSaved);
+        SaveDocsButton.Content = unsaved > 0 ? $"💾  PDFs speichern ({unsaved})" : "💾  PDFs speichern";
+        StatusText.Text = $"{all.Count} Belege ({unsaved} nicht gespeichert)   ·   offen per Überweisung: {open.Count} ({open.Sum(r => r.Data.GrossAmount ?? 0):N2} €)   ·   zu prüfen: {check}";
         LastScanText.Text = _settings.LastScanUtc is { } ls
             ? $"Letzter Abruf: {ls.LocalDateTime:dd.MM.yyyy HH:mm}"
             : $"Erster Abruf ab {_settings.InitialScanFrom.LocalDateTime:dd.MM.yyyy}";
@@ -211,7 +240,8 @@ public partial class MainWindow : Window
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var one = Selected.FirstOrDefault();
-        MailButton.IsEnabled = one?.Record.MailFilePath is { } p && File.Exists(p);
+        MailButton.IsEnabled = one is not null && (one.Record.MailFilePath is { } p && File.Exists(p) || !one.Record.IsSaved);
+        FolderButton.IsEnabled = one?.Record.IsSaved == true;
         ConfirmIbanButton.Visibility = Selected.Any(r => r.Record.Warnings.Any(w => w.StartsWith("ACHTUNG: IBAN", StringComparison.Ordinal)))
             ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -220,17 +250,75 @@ public partial class MainWindow : Window
 
     private void OnOpen(object sender, RoutedEventArgs e)
     {
-        foreach (var row in Selected.Take(5)) ShellOpen(row.Record.FilePath);
+        foreach (var row in Selected.Take(5))
+            if (DocumentPath(row.Record) is { } path) ShellOpen(path);
     }
 
     private void OnOpenMail(object sender, RoutedEventArgs e)
     {
-        if (Selected.FirstOrDefault()?.Record.MailFilePath is { } p) ShellOpen(p);
+        if (Selected.FirstOrDefault() is not { } row) return;
+        var path = row.Record.IsSaved ? row.Record.MailFilePath : Archiver.WritePreview(row.Record, originalMail: true);
+        if (path is null) MessageBox.Show(this, "Die Original-Mail wurde nicht mit abgelegt.", "Mail");
+        else ShellOpen(path);
+    }
+
+    /// <summary>Archived file, or a temporary copy for invoices that are not saved yet.</summary>
+    private string? DocumentPath(InvoiceRecord r) => r.IsSaved ? r.FilePath : Archiver.WritePreview(r);
+
+    private void OnSaveDocuments(object sender, RoutedEventArgs e)
+    {
+        var rows = Selected.Where(r => !r.Record.IsSaved).ToList();
+        if (rows.Count == 0)
+        {
+            rows = _view!.Cast<InvoiceRow>().Where(r => !r.Record.IsSaved).ToList();
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(this, "Alle angezeigten Rechnungen sind bereits gespeichert.", "PDFs speichern");
+                return;
+            }
+            if (MessageBox.Show(this, $"Alle {rows.Count} angezeigten, noch nicht gespeicherten Rechnungen in\n{_settings.ArchiveRoot}\nablegen?",
+                    "PDFs speichern", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        }
+
+        var archiver = Archiver;
+        var saved = 0;
+        foreach (var row in rows)
+        {
+            try
+            {
+                if (archiver.Save(row.Record)) saved++;
+                row.Update(row.Record);
+            }
+            catch (Exception ex)
+            {
+                AddLog(ScanEventLevel.Error, $"{row.Supplier} {row.InvoiceNumber}: {ex.Message}");
+            }
+        }
+        AddLog(ScanEventLevel.Success, $"{saved} PDF(s) im Archiv gespeichert.");
+        UpdateStatus();
+        _view?.Refresh();
+    }
+
+    private void OnDiscard(object sender, RoutedEventArgs e)
+    {
+        var count = _rows.Count(r => !r.Record.IsSaved);
+        if (count == 0) return;
+        if (MessageBox.Show(this,
+                $"{count} nicht gespeicherte Einträge aus der Liste entfernen?\n\n" +
+                "Gespeicherte PDFs bleiben unverändert. Die betroffenen Mails werden beim nächsten Abruf erneut gelesen.",
+                "Verwerfen", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        _db!.DiscardUnsaved();
+        _lastScanIds.Clear();
+        var keepFrom = FromDate.SelectedDate;
+        var keepTo = ToDate.SelectedDate;
+        OpenDatabase();
+        FromDate.SelectedDate = keepFrom;
+        ToDate.SelectedDate = keepTo;
     }
 
     private void OnShowInFolder(object sender, RoutedEventArgs e)
     {
-        if (Selected.FirstOrDefault() is { } row && File.Exists(row.Record.FilePath))
+        if (Selected.FirstOrDefault() is { IsSavedRow: true } row && File.Exists(row.Record.FilePath))
             Process.Start("explorer.exe", $"/select,\"{row.Record.FilePath}\"");
     }
 
@@ -244,7 +332,8 @@ public partial class MainWindow : Window
         {
             try
             {
-                Process.Start(new ProcessStartInfo(row.Record.FilePath) { Verb = "print", UseShellExecute = true });
+                var path = DocumentPath(row.Record) ?? throw new FileNotFoundException();
+                Process.Start(new ProcessStartInfo(path) { Verb = "print", UseShellExecute = true });
                 _db!.MarkPrinted(row.Record.Id);
                 row.Record.Printed = true;
                 row.Update(row.Record);
@@ -254,7 +343,7 @@ public partial class MainWindow : Window
                 MessageBox.Show(this,
                     "Das Standard-PDF-Programm unterstützt kein direktes Drucken.\nDie Datei wird geöffnet – bitte dort drucken.",
                     "Drucken", MessageBoxButton.OK, MessageBoxImage.Information);
-                ShellOpen(row.Record.FilePath);
+                if (DocumentPath(row.Record) is { } p) ShellOpen(p);
                 break;
             }
         }

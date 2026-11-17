@@ -9,6 +9,9 @@ namespace TrennFix.Core.Storage;
 /// SQLite database that indexes all archived invoices, suppliers and already processed mails.
 /// It lives next to the archive folder (so archive + index always belong together).
 /// </summary>
+/// <summary>Documents of an invoice that is listed but not yet written to the archive folder.</summary>
+public sealed record PendingFiles(byte[] Main, string MainExtension, byte[]? Xml, byte[]? Mail, string MailExtension);
+
 public sealed class InvoiceDatabase : IDisposable
 {
     private readonly SqliteConnection _db;
@@ -86,6 +89,14 @@ public sealed class InvoiceDatabase : IDisposable
             );
             CREATE INDEX IF NOT EXISTS ix_invoices_supplier_number ON invoices(supplier_id, invoice_number);
             CREATE INDEX IF NOT EXISTS ix_invoices_sha ON invoices(file_sha256);
+            CREATE TABLE IF NOT EXISTS pending_files (
+                invoice_id INTEGER PRIMARY KEY REFERENCES invoices(id) ON DELETE CASCADE,
+                main BLOB NOT NULL,
+                main_ext TEXT NOT NULL,
+                xml BLOB,
+                mail BLOB,
+                mail_ext TEXT
+            );
             CREATE TABLE IF NOT EXISTS processed_messages (
                 message_id TEXT PRIMARY KEY,
                 received TEXT NOT NULL,
@@ -196,10 +207,50 @@ public sealed class InvoiceDatabase : IDisposable
     public void UpdateStatus(long invoiceId, InvoiceStatus status) =>
         Exec("UPDATE invoices SET status = $s WHERE id = $id", ("$id", invoiceId), ("$s", (int)status));
 
-    public void SetMailFilePath(IEnumerable<long> invoiceIds, string path)
+    // ------------------------------------------------------------------ not yet saved documents
+
+    public void SavePending(long invoiceId, PendingFiles f) =>
+        Exec("""
+            INSERT OR REPLACE INTO pending_files(invoice_id, main, main_ext, xml, mail, mail_ext)
+            VALUES ($id, $m, $me, $x, $ml, $mle)
+            """, ("$id", invoiceId), ("$m", f.Main), ("$me", f.MainExtension), ("$x", f.Xml), ("$ml", f.Mail), ("$mle", f.MailExtension));
+
+    public PendingFiles? GetPending(long invoiceId)
     {
-        foreach (var id in invoiceIds)
-            Exec("UPDATE invoices SET mail_file_path = $p WHERE id = $id", ("$id", id), ("$p", path));
+        using var r = Query("SELECT main, main_ext, xml, mail, mail_ext FROM pending_files WHERE invoice_id = $id", ("$id", invoiceId));
+        if (!r.Read()) return null;
+        return new PendingFiles(
+            (byte[])r[0], r.GetString(1),
+            r.IsDBNull(2) ? null : (byte[])r[2],
+            r.IsDBNull(3) ? null : (byte[])r[3],
+            r.IsDBNull(4) ? ".eml" : r.GetString(4));
+    }
+
+    /// <summary>Documents were written to the archive folder → remember the paths, drop the copy in the database.</summary>
+    public void MarkSaved(long invoiceId, string filePath, string? xmlPath, string? mailPath)
+    {
+        Exec("UPDATE invoices SET file_path = $f, xml_file_path = $x, mail_file_path = $m WHERE id = $id",
+            ("$id", invoiceId), ("$f", filePath), ("$x", xmlPath), ("$m", mailPath));
+        Exec("DELETE FROM pending_files WHERE invoice_id = $id", ("$id", invoiceId));
+    }
+
+    /// <summary>
+    /// Removes every invoice that was listed but not saved, and forgets that its mails were processed –
+    /// the next scan of that period reads them again (useful while testing).
+    /// </summary>
+    public int DiscardUnsaved()
+    {
+        Exec("BEGIN");
+        Exec("DELETE FROM processed_messages WHERE message_id IN (SELECT mail_message_id FROM invoices WHERE file_path = '')");
+        var count = Scalar<long>("SELECT COUNT(*) FROM invoices WHERE file_path = ''");
+        Exec("DELETE FROM pending_files WHERE invoice_id IN (SELECT id FROM invoices WHERE file_path = '')");
+        Exec("DELETE FROM invoices WHERE file_path = ''");
+        // suppliers (and the IBANs learned from them) that only existed because of discarded invoices
+        Exec("DELETE FROM suppliers WHERE id NOT IN (SELECT supplier_id FROM invoices)");
+        // mails without any invoice (no attachment etc.) are also read again
+        Exec("DELETE FROM processed_messages WHERE invoice_count = 0");
+        Exec("COMMIT");
+        return (int)count;
     }
 
     public void MarkPrinted(long invoiceId) => Exec("UPDATE invoices SET printed = 1 WHERE id = $id", ("$id", invoiceId));

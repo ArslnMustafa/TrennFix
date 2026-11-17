@@ -19,6 +19,10 @@
             <Button x:Name="ScanButton" Style="{StaticResource PrimaryButton}" Click="OnScan"
                     ToolTip="Alle Mails seit dem letzten Abruf prüfen und Rechnungen archivieren">▶  Rechnungen abrufen</Button>
             <Button x:Name="CancelButton" Click="OnCancel" IsEnabled="False">Abbrechen</Button>
+            <Button x:Name="SaveDocsButton" Click="OnSaveDocuments" FontWeight="SemiBold"
+                    ToolTip="Markierte (oder alle noch nicht gespeicherten) Rechnungen als PDF im Archivordner ablegen">💾  PDFs speichern</Button>
+            <Button x:Name="DiscardButton" Click="OnDiscard"
+                    ToolTip="Alle noch nicht gespeicherten Einträge aus der Liste entfernen (zum Testen – Mails werden beim nächsten Abruf neu gelesen)">Verwerfen</Button>
             <Separator Width="12" Background="Transparent"/>
             <Button x:Name="OpenButton" Click="OnOpen" ToolTip="PDF öffnen (Doppelklick)">Öffnen</Button>
             <Button x:Name="PrintButton" Click="OnPrint" ToolTip="Markierte Rechnungen drucken">Drucken</Button>
@@ -35,7 +39,11 @@
 
         <!-- Filter -->
         <DockPanel Grid.Row="1" Margin="10,0,10,6">
-            <TextBlock VerticalAlignment="Center" Margin="0,0,6,0">Suche:</TextBlock>
+            <TextBlock VerticalAlignment="Center" Margin="0,0,6,0">Mails von:</TextBlock>
+            <DatePicker x:Name="FromDate" Width="120"/>
+            <TextBlock VerticalAlignment="Center" Margin="8,0,6,0">bis:</TextBlock>
+            <DatePicker x:Name="ToDate" Width="120"/>
+            <TextBlock VerticalAlignment="Center" Margin="20,0,6,0">Suche:</TextBlock>
             <TextBox x:Name="SearchBox" Width="260" TextChanged="OnFilterChanged"/>
             <TextBlock VerticalAlignment="Center" Margin="16,0,6,0">Anzeigen:</TextBlock>
             <ComboBox x:Name="FilterBox" Width="240" SelectionChanged="OnFilterChanged" SelectedIndex="0">
@@ -45,6 +53,7 @@
                 <ComboBoxItem>Lastschrift</ComboBoxItem>
                 <ComboBoxItem>Noch nicht gedruckt</ComboBoxItem>
                 <ComboBoxItem>Letzter Abruf</ComboBoxItem>
+                <ComboBoxItem>Noch nicht gespeichert</ComboBoxItem>
             </ComboBox>
             <TextBlock x:Name="LastScanText" DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="Gray"/>
         </DockPanel>
@@ -94,6 +103,7 @@
                 <DataGridTextColumn Header="Zahlungsart" Binding="{Binding Payment}" Width="105"/>
                 <DataGridTextColumn Header="IBAN" Binding="{Binding Iban}" Width="1.6*"/>
                 <DataGridTextColumn Header="Quelle" Binding="{Binding Source}" Width="75"/>
+                <DataGridTextColumn Header="Gespeichert" Binding="{Binding Saved}" Width="80"/>
                 <DataGridTextColumn Header="Druck" Binding="{Binding Printed}" Width="45"/>
                 <DataGridTextColumn Header="Mail erhalten" Binding="{Binding Received, StringFormat=dd.MM.yyyy HH:mm}" Width="115"/>
                 <DataGridTextColumn Header="Hinweise" Binding="{Binding Warnings}" Width="3*"/>

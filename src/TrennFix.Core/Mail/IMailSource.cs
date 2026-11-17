@@ -38,8 +38,9 @@ public interface IMailSource : IAsyncDisposable
     Task ConnectAsync(CancellationToken ct);
 
     /// <summary>
-    /// All messages received at or after <paramref name="since"/> that have at least one PDF or XML
-    /// attachment, in the configured folders (incl. subfolders – mails may already have been moved).
+    /// All messages received at or after <paramref name="since"/> (and before <paramref name="until"/>, if given)
+    /// that have at least one PDF or XML attachment, in the configured folders (incl. subfolders – mails may
+    /// already have been moved). Sources may return a few mails outside the period; the caller filters exactly.
     /// </summary>
-    IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, CancellationToken ct);
+    IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, DateTimeOffset? until, CancellationToken ct);
 }

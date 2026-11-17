@@ -5,8 +5,12 @@ using TrennFix.Core.Storage;
 
 namespace TrennFix.Core.Scanning;
 
-/// <summary>Turns one e-mail into archived invoice records.</summary>
-public sealed class InvoiceImporter(InvoiceExtractor extractor, InvoiceDatabase db, ArchiveService archive, bool saveOriginalMail)
+/// <summary>
+/// Turns one e-mail into invoice records. Nothing is written to the archive folder here: the documents
+/// are kept in the database ("nicht gespeichert") until the user clicks "PDFs speichern"
+/// (see <see cref="InvoiceArchiver"/>), or right away when auto-save is switched on.
+/// </summary>
+public sealed class InvoiceImporter(InvoiceExtractor extractor, InvoiceDatabase db, bool saveOriginalMail)
 {
     private readonly SupplierResolver _suppliers = new(db);
 
@@ -69,28 +73,33 @@ public sealed class InvoiceImporter(InvoiceExtractor extractor, InvoiceDatabase 
             return new ImportResult([], note);
         }
 
-        var records = new List<InvoiceRecord>();
-        foreach (var doc in relevant)
-            if (Store(mail, doc) is { } rec) records.Add(rec);
-
-        if (saveOriginalMail && mail.SaveOriginalAsync is not null && records.Count > 0)
+        byte[]? mailBytes = null;
+        if (saveOriginalMail && mail.SaveOriginalAsync is not null)
         {
+            var tmp = Path.Combine(Path.GetTempPath(), $"trennfix-{Guid.NewGuid():N}{mail.OriginalExtension}");
             try
             {
-                var mailPath = await mail.SaveOriginalAsync(ArchiveService.CompanionPath(records[0].FilePath, mail.OriginalExtension), ct);
-                foreach (var r in records) r.MailFilePath = mailPath;
-                db.SetMailFilePath(records.Select(r => r.Id), mailPath);
+                await mail.SaveOriginalAsync(tmp, ct);
+                mailBytes = await File.ReadAllBytesAsync(tmp, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // the invoice itself is safe – the original mail is a nice-to-have
+                // the invoice itself is what matters – the original mail is a nice-to-have
+            }
+            finally
+            {
+                try { File.Delete(tmp); } catch (IOException) { }
             }
         }
 
-        return new ImportResult(records, $"{records.Count} Rechnung(en) importiert");
+        var records = new List<InvoiceRecord>();
+        foreach (var doc in relevant)
+            records.Add(Store(mail, doc, mailBytes));
+
+        return new ImportResult(records, $"{records.Count} Rechnung(en) erkannt");
     }
 
-    private InvoiceRecord? Store(MailItem mail, Doc doc)
+    private InvoiceRecord Store(MailItem mail, Doc doc, byte[]? mailBytes)
     {
         var data = doc.Data;
         var (supplier, isNew) = _suppliers.Resolve(data, mail.FromAddress, mail.FromName);
@@ -118,21 +127,20 @@ public sealed class InvoiceImporter(InvoiceExtractor extractor, InvoiceDatabase 
         if (data.Kind == DocumentKind.Mahnung) record.Warnings.Add("Mahnung/Zahlungserinnerung – prüfen, ob die Rechnung bereits bezahlt wurde.");
         if (SupplierResolver.CheckIban(supplier, data, isNew, db) is { } ibanWarning) record.Warnings.Add(ibanWarning);
         if (duplicate is not null)
-            record.Warnings.Add($"Doppelt: Rechnung {duplicate.Data.InvoiceNumber} wurde bereits am {duplicate.ImportedAt:dd.MM.yyyy} archiviert ({Path.GetFileName(duplicate.FilePath)}).");
+            record.Warnings.Add($"Doppelt: Rechnung {duplicate.Data.InvoiceNumber} wurde bereits am {duplicate.ImportedAt:dd.MM.yyyy} erfasst" +
+                               (duplicate.IsSaved ? $" ({Path.GetFileName(duplicate.FilePath)})." : "."));
 
         record.Status = duplicate is not null ? InvoiceStatus.Duplikat
             : record.Warnings.Count > 0 ? InvoiceStatus.Pruefen
             : InvoiceStatus.Ok;
 
-        record.FilePath = archive.SaveDocument(supplier.FolderName, data, mail.Received, doc.Main.FileName, doc.Main.Content,
-            doc.Main.IsXml ? ".xml" : ".pdf");
-        if (doc.Xml is not null && !ReferenceEquals(doc.Xml, doc.Main))
-        {
-            record.XmlFilePath = ArchiveService.CompanionPath(record.FilePath, ".xml");
-            File.WriteAllBytes(record.XmlFilePath, doc.Xml.Content);
-        }
-
         db.InsertInvoice(record);
+        db.SavePending(record.Id, new PendingFiles(
+            doc.Main.Content,
+            doc.Main.IsXml ? ".xml" : ".pdf",
+            doc.Xml is not null && !ReferenceEquals(doc.Xml, doc.Main) ? doc.Xml.Content : null,
+            mailBytes,
+            mail.OriginalExtension));
         return record;
     }
 }

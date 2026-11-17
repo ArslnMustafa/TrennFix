@@ -44,11 +44,13 @@ public sealed class InvoiceRow(InvoiceRecord record) : INotifyPropertyChanged
     public string Source => ExcelExporter.SourceText(D.Source);
     public string Format => D.FormatName ?? "";
     public string Printed => Record.Printed ? "✓" : "";
+    public string Saved => Record.IsSaved ? "✓" : "–";
+    public bool IsSavedRow => Record.IsSaved;
     public DateTime Received => Record.MailReceived.LocalDateTime;
     public string Warnings => string.Join("  |  ", Record.Warnings);
     public string FileName => Path.GetFileName(Record.FilePath);
     public string ToolTipText =>
-        $"{Record.MailSubject}\nVon: {Record.MailFrom}\nDatei: {Record.FilePath}" +
+        $"{Record.MailSubject}\nVon: {Record.MailFrom}\nDatei: {(Record.IsSaved ? Record.FilePath : "noch nicht gespeichert (" + Record.OriginalFileName + ")")}" +
         (D.MandateReference is null ? "" : $"\nMandatsreferenz: {D.MandateReference}") +
         (D.DiscountTerms is null ? "" : $"\nSkonto: {D.DiscountTerms}") +
         (D.PaymentReference is null ? "" : $"\nVerwendungszweck: {D.PaymentReference}") +

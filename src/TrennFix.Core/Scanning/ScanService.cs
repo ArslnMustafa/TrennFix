@@ -12,8 +12,8 @@ public sealed record ScanEvent(ScanEventLevel Level, string Message, InvoiceReco
 public sealed record ScanSummary(int MailsSeen, int MailsSkipped, int InvoicesImported, int Warnings, int Errors, DateTimeOffset From, bool Cancelled);
 
 /// <summary>
-/// The "Scannen" button: reads every mail since the last successful scan, archives the invoices
-/// and remembers where it stopped. Mails that were already processed are skipped (also when
+/// The "Rechnungen abrufen" button: reads every mail in the chosen period (default: since the last
+/// successful scan), lists the invoices and remembers where it stopped. Mails that were already processed are skipped (also when
 /// they were moved to another folder in the meantime).
 /// </summary>
 public sealed class ScanService(AppSettings settings, InvoiceDatabase db, IOcrEngine? ocr, Action<AppSettings> saveSettings)
@@ -21,25 +21,35 @@ public sealed class ScanService(AppSettings settings, InvoiceDatabase db, IOcrEn
     /// <summary>Re-check this much before the last scan to be safe against clock skew / late delivery.</summary>
     public static readonly TimeSpan Overlap = TimeSpan.FromDays(2);
 
-    public async Task<ScanSummary> RunAsync(IMailSource source, IProgress<ScanEvent> progress, CancellationToken ct)
+    /// <summary>Default start of the next scan: last scan (minus a safety overlap) or the configured first date.</summary>
+    public static DateTimeOffset DefaultFrom(AppSettings settings) =>
+        settings.LastScanUtc is { } last ? last - Overlap : settings.InitialScanFrom;
+
+    /// <param name="from">Mails received at or after this time.</param>
+    /// <param name="until">Mails received before this time; null = up to now (then the scan position is remembered).</param>
+    public async Task<ScanSummary> RunAsync(IMailSource source, DateTimeOffset from, DateTimeOffset? until,
+        IProgress<ScanEvent> progress, CancellationToken ct)
     {
         var scanStart = DateTimeOffset.UtcNow;
-        var from = (settings.LastScanUtc ?? settings.InitialScanFrom) - (settings.LastScanUtc is null ? TimeSpan.Zero : Overlap);
 
         var extractor = new InvoiceExtractor(settings.ToExtractionOptions(), settings.OcrEnabled ? ocr : null);
-        var importer = new InvoiceImporter(extractor, db, new ArchiveService(settings.ArchiveRoot), settings.SaveOriginalMail);
+        var importer = new InvoiceImporter(extractor, db, settings.SaveOriginalMail);
+        var archiver = settings.AutoSaveDocuments ? new InvoiceArchiver(db, new ArchiveService(settings.ArchiveRoot)) : null;
 
         int seen = 0, skipped = 0, imported = 0, warnings = 0, errors = 0;
         DateTimeOffset? earliestFailure = null;
 
         progress.Report(new(ScanEventLevel.Info, $"Verbinde mit {source.DisplayName} …"));
         await source.ConnectAsync(ct);
-        progress.Report(new(ScanEventLevel.Info, $"Suche Mails mit Anhängen seit {from.LocalDateTime:dd.MM.yyyy HH:mm} …"));
+        progress.Report(new(ScanEventLevel.Info, until is { } u
+            ? $"Suche Mails mit Anhängen vom {from.LocalDateTime:dd.MM.yyyy} bis {u.LocalDateTime.AddSeconds(-1):dd.MM.yyyy} …"
+            : $"Suche Mails mit Anhängen seit {from.LocalDateTime:dd.MM.yyyy HH:mm} …"));
 
         try
         {
-            await foreach (var mail in source.GetMessagesAsync(from, ct))
+            await foreach (var mail in source.GetMessagesAsync(from, until, ct))
             {
+                if (mail.Received < from || until is { } end && mail.Received >= end) continue;
                 seen++;
                 if (db.IsMessageProcessed(mail.MessageId))
                 {
@@ -51,6 +61,8 @@ public sealed class ScanService(AppSettings settings, InvoiceDatabase db, IOcrEn
                 {
                     var result = await importer.ImportAsync(mail, ct);
                     db.MarkMessageProcessed(mail.MessageId, mail.Received, result.Records.Count, result.Note);
+                    if (archiver is not null)
+                        foreach (var r in result.Records) archiver.Save(r);
 
                     if (result.Records.Count == 0)
                         progress.Report(new(ScanEventLevel.Info, $"{mail.Received.LocalDateTime:dd.MM. HH:mm}  {mail.Subject} – {result.Note}"));
@@ -81,11 +93,15 @@ public sealed class ScanService(AppSettings settings, InvoiceDatabase db, IOcrEn
         }
 
         // Next scan starts here – or at the first failed mail so it is retried.
-        settings.LastScanUtc = earliestFailure is { } f && f < scanStart ? f : scanStart;
-        saveSettings(settings);
+        // A scan of a past period (until set) does not move the position.
+        if (until is null)
+        {
+            settings.LastScanUtc = earliestFailure is { } f && f < scanStart ? f : scanStart;
+            saveSettings(settings);
+        }
 
         progress.Report(new(errors > 0 ? ScanEventLevel.Warning : ScanEventLevel.Success,
-            $"Fertig: {seen} Mails geprüft, {skipped} bereits bekannt, {imported} Rechnungen archiviert, {warnings} zu prüfen, {errors} Fehler."));
+            $"Fertig: {seen} Mails geprüft, {skipped} bereits bekannt, {imported} Rechnungen erkannt, {warnings} zu prüfen, {errors} Fehler."));
         return new ScanSummary(seen, skipped, imported, warnings, errors, from, Cancelled: false);
     }
 }

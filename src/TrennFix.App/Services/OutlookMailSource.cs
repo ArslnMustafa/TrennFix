@@ -34,10 +34,10 @@ public sealed class OutlookMailSource(OutlookSettings settings, IReadOnlyList<st
         return Task.CompletedTask;
     }
 
-    public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, [EnumeratorCancellation] CancellationToken ct)
+    public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, DateTimeOffset? until, [EnumeratorCancellation] CancellationToken ct)
     {
         Directory.CreateDirectory(_tempDir);
-        var items = await RunOnStaThread(() => Collect(since, ct));
+        var items = await RunOnStaThread(() => Collect(since, until, ct));
         foreach (var item in items)
         {
             ct.ThrowIfCancellationRequested();
@@ -45,7 +45,7 @@ public sealed class OutlookMailSource(OutlookSettings settings, IReadOnlyList<st
         }
     }
 
-    private List<MailItem> Collect(DateTimeOffset since, CancellationToken ct)
+    private List<MailItem> Collect(DateTimeOffset since, DateTimeOffset? until, CancellationToken ct)
     {
         dynamic app = Activator.CreateInstance(Type.GetTypeFromProgID("Outlook.Application")!)!;
         dynamic ns = app.GetNamespace("MAPI");
@@ -60,7 +60,11 @@ public sealed class OutlookMailSource(OutlookSettings settings, IReadOnlyList<st
             // DASL filter values are UTC; one day of slack, exact filter below.
             var filter = "@SQL=\"urn:schemas:httpmail:datereceived\" >= '" +
                          since.UtcDateTime.AddDays(-1).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture) +
-                         "' AND \"urn:schemas:httpmail:hasattachment\" = 1";
+                         "' AND \"urn:schemas:httpmail:hasattachment\" = 1" +
+                         (until is { } u
+                             ? " AND \"urn:schemas:httpmail:datereceived\" < '" +
+                               u.UtcDateTime.AddDays(1).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture) + "'"
+                             : "");
             dynamic restricted = items.Restrict(filter);
             var count = (int)restricted.Count;
             for (var i = 1; i <= count; i++)
@@ -72,7 +76,7 @@ public sealed class OutlookMailSource(OutlookSettings settings, IReadOnlyList<st
                     if ((int)mail.Class != OlMailItemClass) continue;
                     DateTime receivedLocal = mail.ReceivedTime;
                     var received = new DateTimeOffset(receivedLocal);
-                    if (received < since) continue;
+                    if (received < since || until is { } end && received >= end) continue;
 
                     string messageId = "";
                     try { messageId = MailHelpers.NormalizeMessageId((string)mail.PropertyAccessor.GetProperty(PrInternetMessageId)); }

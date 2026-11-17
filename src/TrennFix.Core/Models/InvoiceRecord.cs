@@ -25,7 +25,9 @@ public sealed class InvoiceRecord
     /// <summary>Human readable warnings, e.g. IBAN changed, fields missing.</summary>
     public List<string> Warnings { get; } = [];
 
+    /// <summary>Path in the archive folder; empty while the invoice is only listed ("nicht gespeichert").</summary>
     public string FilePath { get; set; } = "";
+    public bool IsSaved => !string.IsNullOrEmpty(FilePath);
     public string? XmlFilePath { get; set; }
     public string? MailFilePath { get; set; }
     public string FileSha256 { get; set; } = "";

@@ -22,7 +22,7 @@ public sealed class ScanServiceTests : IDisposable
         public Task ConnectAsync(CancellationToken ct) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-        public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, [EnumeratorCancellation] CancellationToken ct)
+        public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, DateTimeOffset? until, [EnumeratorCancellation] CancellationToken ct)
         {
             foreach (var m in items.Where(m => m.Received >= since))
             {
@@ -67,7 +67,7 @@ public sealed class ScanServiceTests : IDisposable
         var events = new List<ScanEvent>();
         var progress = new SyncProgress(events.Add);
 
-        var s1 = await service.RunAsync(new FakeMailbox(mails), progress, CancellationToken.None);
+        var s1 = await service.RunAsync(new FakeMailbox(mails), ScanService.DefaultFrom(settings), null, progress, CancellationToken.None);
         Assert.Equal(3, s1.MailsSeen);
         Assert.Equal(2, s1.InvoicesImported);
         Assert.Equal(1, saved);
@@ -78,8 +78,20 @@ public sealed class ScanServiceTests : IDisposable
         var schneider = invoices.Single(i => i.Data.InvoiceNumber == "RE-2026-10457");
         Assert.Equal("Bürobedarf Schneider GmbH", schneider.SupplierName);
         Assert.Equal(InvoiceStatus.Ok, schneider.Status);
-        Assert.Equal(Path.Combine(settings.ArchiveRoot, "Bürobedarf Schneider GmbH", "2026", "2026-11-03_RE-2026-10457.pdf"), schneider.FilePath);
+
+        // Scanning only lists – nothing is written to the archive until "PDFs speichern".
+        Assert.False(schneider.IsSaved);
+        Assert.False(Directory.Exists(Path.Combine(settings.ArchiveRoot, "Bürobedarf Schneider GmbH")));
+        var archiver = new InvoiceArchiver(db, new ArchiveService(settings.ArchiveRoot));
+        var preview = archiver.WritePreview(schneider);
+        Assert.True(File.Exists(preview));
+
+        Assert.True(archiver.Save(schneider));
+        Assert.Equal(Path.Combine(settings.ArchiveRoot, "Bürobedarf Schneider GmbH", "2026", "RE-2026-10457.pdf"), schneider.FilePath);
         Assert.True(File.Exists(schneider.FilePath));
+        Assert.True(db.GetInvoice(schneider.Id)!.IsSaved);
+        Assert.Null(db.GetPending(schneider.Id));
+        Assert.False(archiver.Save(schneider)); // already saved
         Assert.Equal(PaymentMethod.Lastschrift, invoices.Single(i => i.Data.InvoiceNumber == "7700123456").Data.PaymentMethod);
 
         // ---- second scan: old mails (even if moved to a subfolder) are skipped; new mail with changed IBAN
@@ -92,7 +104,7 @@ public sealed class ScanServiceTests : IDisposable
         mails.Add(Mail("<5@schneider>", "rechnung@buero-schneider.de", "Buchhaltung", DateTimeOffset.UtcNow.AddMinutes(2),
             Pdf("Kopie.pdf", SampleInvoices.Ueberweisung + "\nKOPIE")));
 
-        var s2 = await service.RunAsync(new FakeMailbox(mails), progress, CancellationToken.None);
+        var s2 = await service.RunAsync(new FakeMailbox(mails), ScanService.DefaultFrom(settings), null, progress, CancellationToken.None);
         Assert.Equal(2, s2.InvoicesImported);
         Assert.Equal(0, s2.Errors);
 
@@ -107,6 +119,19 @@ public sealed class ScanServiceTests : IDisposable
         // confirming the new IBAN removes the warning
         db.ConfirmIban(changed.Id);
         Assert.Equal(InvoiceStatus.Ok, db.GetInvoice(changed.Id)!.Status);
+
+        // "Verwerfen": unsaved invoices are removed and their mails will be read again
+        var discarded = db.DiscardUnsaved();
+        Assert.Equal(all.Count(i => !i.IsSaved), discarded);
+        Assert.Single(db.GetInvoices());
+        Assert.False(db.IsMessageProcessed("<2@netzfunk>"));
+        Assert.True(db.IsMessageProcessed("<1@schneider>"));
+
+        // a past period can be re-scanned without moving the scan position
+        var position = settings.LastScanUtc;
+        var s3 = await service.RunAsync(new FakeMailbox(mails), t0.AddHours(-1), t0.AddHours(1.5), progress, CancellationToken.None);
+        Assert.Equal(1, s3.InvoicesImported); // only the NetzFunk mail lies in that window and is unprocessed
+        Assert.Equal(position, settings.LastScanUtc);
 
         // Excel export works
         var xlsx = Path.Combine(_dir.FullName, "export.xlsx");

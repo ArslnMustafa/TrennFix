@@ -63,6 +63,8 @@ public sealed class AppSettings
     public List<string> OwnVatIds { get; set; } = [];
 
     public bool SaveOriginalMail { get; set; } = true;
+    /// <summary>false (default): invoices are only listed, the "PDFs speichern" button writes them to the archive.</summary>
+    public bool AutoSaveDocuments { get; set; }
     public bool OcrEnabled { get; set; } = true;
     public string OcrLanguage { get; set; } = "de-DE";
 

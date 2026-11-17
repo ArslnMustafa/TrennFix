@@ -23,13 +23,15 @@ public sealed class ImapMailSource(ImapSettings settings, string password, IRead
         await _client.AuthenticateAsync(settings.UserName, password, ct);
     }
 
-    public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, [EnumeratorCancellation] CancellationToken ct)
+    public async IAsyncEnumerable<MailItem> GetMessagesAsync(DateTimeOffset since, DateTimeOffset? until, [EnumeratorCancellation] CancellationToken ct)
     {
         foreach (var folder in await ResolveFoldersAsync(ct))
         {
             await folder.OpenAsync(FolderAccess.ReadOnly, ct);
             // IMAP SINCE has day granularity → search one day earlier, filter exactly below.
-            var uids = await folder.SearchAsync(SearchQuery.DeliveredAfter(since.UtcDateTime.Date.AddDays(-1)), ct);
+            SearchQuery query = SearchQuery.DeliveredAfter(since.UtcDateTime.Date.AddDays(-1));
+            if (until is { } u) query = query.And(SearchQuery.DeliveredBefore(u.UtcDateTime.Date.AddDays(1)));
+            var uids = await folder.SearchAsync(query, ct);
             if (uids.Count == 0) continue;
 
             var summaries = await folder.FetchAsync(uids,
@@ -38,7 +40,7 @@ public sealed class ImapMailSource(ImapSettings settings, string password, IRead
             foreach (var summary in summaries.OrderBy(s => s.InternalDate))
             {
                 var received = summary.InternalDate ?? summary.Envelope?.Date ?? DateTimeOffset.MinValue;
-                if (received < since) continue;
+                if (received < since || until is { } end && received >= end) continue;
 
                 var parts = (summary.BodyParts ?? [])
                     .Where(p => MailHelpers.IsRelevantAttachment(p.FileName, p.ContentType?.MimeType))

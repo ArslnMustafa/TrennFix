@@ -33,6 +33,7 @@ public partial class SettingsWindow : Window
         IncludeSub.IsChecked = _s.IncludeSubfolders;
         ArchiveRoot.Text = _s.ArchiveRoot;
         SaveMail.IsChecked = _s.SaveOriginalMail;
+        AutoSave.IsChecked = _s.AutoSaveDocuments;
         OcrEnabled.IsChecked = _s.OcrEnabled;
         InitialFrom.SelectedDate = _s.InitialScanFrom.LocalDateTime.Date;
         LastScanInfo.Text = _s.LastScanUtc is { } ls ? $"Letzter Abruf: {ls.LocalDateTime:dd.MM.yyyy HH:mm}" : "Noch kein Abruf.";
@@ -103,6 +104,7 @@ public partial class SettingsWindow : Window
         _s.IncludeSubfolders = IncludeSub.IsChecked == true;
         _s.ArchiveRoot = ArchiveRoot.Text.Trim();
         _s.SaveOriginalMail = SaveMail.IsChecked == true;
+        _s.AutoSaveDocuments = AutoSave.IsChecked == true;
         _s.OcrEnabled = OcrEnabled.IsChecked == true;
         if (InitialFrom.SelectedDate is { } d) _s.InitialScanFrom = new DateTimeOffset(d);
 
