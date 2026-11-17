@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Windows 10 2004+ : needed for the built-in OCR (Windows.Media.Ocr) and PDF renderer (Windows.Data.Pdf) -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>TrennFix</AssemblyName>
+    <RootNamespace>TrennFix.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.1.0</Version>
+    <Product>TrennFix Rechnungseingang</Product>
+    <!-- allows building on Linux/macOS CI; the app itself only runs on Windows -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- dotnet publish -c Release  →  one TrennFix.exe, no .NET installation needed -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TrennFix.Core\TrennFix.Core.csproj" />
+    <ProjectReference Include="..\TrennFix.Mail\TrennFix.Mail.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+</Project>

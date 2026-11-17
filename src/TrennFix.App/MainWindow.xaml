@@ -1,0 +1,123 @@
+<Window x:Class="TrennFix.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TrennFix – Rechnungseingang" Height="760" Width="1400" MinWidth="900" MinHeight="500"
+        WindowStartupLocation="CenterScreen" Loaded="OnLoaded" Closing="OnClosing"
+        FontFamily="Segoe UI" FontSize="13">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="160" MinHeight="60"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Toolbar -->
+        <DockPanel Grid.Row="0" Margin="10,10,10,6" LastChildFill="False">
+            <Button x:Name="ScanButton" Style="{StaticResource PrimaryButton}" Click="OnScan"
+                    ToolTip="Alle Mails seit dem letzten Abruf prüfen und Rechnungen archivieren">▶  Rechnungen abrufen</Button>
+            <Button x:Name="CancelButton" Click="OnCancel" IsEnabled="False">Abbrechen</Button>
+            <Separator Width="12" Background="Transparent"/>
+            <Button x:Name="OpenButton" Click="OnOpen" ToolTip="PDF öffnen (Doppelklick)">Öffnen</Button>
+            <Button x:Name="PrintButton" Click="OnPrint" ToolTip="Markierte Rechnungen drucken">Drucken</Button>
+            <Button x:Name="FolderButton" Click="OnShowInFolder">Im Ordner zeigen</Button>
+            <Button x:Name="MailButton" Click="OnOpenMail" ToolTip="Original-Mail öffnen">Mail</Button>
+            <Button x:Name="ConfirmIbanButton" Click="OnConfirmIban" ToolTip="Neue IBAN wurde beim Lieferanten bestätigt">IBAN bestätigen</Button>
+            <Button x:Name="PaidButton" Click="OnMarkPaid">Bezahlt</Button>
+            <Button x:Name="CheckedButton" Click="OnMarkChecked" ToolTip="Hinweis gelesen / geprüft">Geprüft</Button>
+
+            <Button DockPanel.Dock="Right" Click="OnSettings" Margin="0">Einstellungen</Button>
+            <Button DockPanel.Dock="Right" Click="OnOpenArchive">Archiv</Button>
+            <Button DockPanel.Dock="Right" Click="OnExport">Excel-Export</Button>
+        </DockPanel>
+
+        <!-- Filter -->
+        <DockPanel Grid.Row="1" Margin="10,0,10,6">
+            <TextBlock VerticalAlignment="Center" Margin="0,0,6,0">Suche:</TextBlock>
+            <TextBox x:Name="SearchBox" Width="260" TextChanged="OnFilterChanged"/>
+            <TextBlock VerticalAlignment="Center" Margin="16,0,6,0">Anzeigen:</TextBlock>
+            <ComboBox x:Name="FilterBox" Width="240" SelectionChanged="OnFilterChanged" SelectedIndex="0">
+                <ComboBoxItem>Alle</ComboBoxItem>
+                <ComboBoxItem>Zu prüfen</ComboBoxItem>
+                <ComboBoxItem>Offen – Überweisung</ComboBoxItem>
+                <ComboBoxItem>Lastschrift</ComboBoxItem>
+                <ComboBoxItem>Noch nicht gedruckt</ComboBoxItem>
+                <ComboBoxItem>Letzter Abruf</ComboBoxItem>
+            </ComboBox>
+            <TextBlock x:Name="LastScanText" DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="Gray"/>
+        </DockPanel>
+
+        <!-- Invoice list -->
+        <DataGrid x:Name="Grid" Grid.Row="2" Margin="10,0,10,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  SelectionMode="Extended" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="#E5E5E5" RowHeight="26" MouseDoubleClick="OnGridDoubleClick"
+                  SelectionChanged="OnSelectionChanged" EnableRowVirtualization="True">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Setter Property="ToolTip" Value="{Binding ToolTipText}"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding NeedsCheck}" Value="True">
+                            <Setter Property="Background" Value="{StaticResource WarnBg}"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsDuplicate}" Value="True">
+                            <Setter Property="Background" Value="{StaticResource DupBg}"/>
+                            <Setter Property="Foreground" Value="Gray"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="70"/>
+                <DataGridTextColumn Header="Lieferant" Binding="{Binding Supplier}" Width="2*"/>
+                <DataGridTextColumn Header="Typ" Binding="{Binding Kind}" Width="80"/>
+                <DataGridTextColumn Header="Rechnungsnr." Binding="{Binding InvoiceNumber}" Width="1.2*"/>
+                <DataGridTextColumn Header="Datum" Binding="{Binding InvoiceDate, StringFormat=dd.MM.yyyy}" Width="85"/>
+                <DataGridTextColumn Header="Fällig" Binding="{Binding DueDate, StringFormat=dd.MM.yyyy}" Width="85">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource ErrorFg}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Brutto" Binding="{Binding Gross, StringFormat=N2, ConverterCulture=de-DE}" Width="90">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock"><Setter Property="HorizontalAlignment" Value="Right"/></Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Zahlungsart" Binding="{Binding Payment}" Width="105"/>
+                <DataGridTextColumn Header="IBAN" Binding="{Binding Iban}" Width="1.6*"/>
+                <DataGridTextColumn Header="Quelle" Binding="{Binding Source}" Width="75"/>
+                <DataGridTextColumn Header="Druck" Binding="{Binding Printed}" Width="45"/>
+                <DataGridTextColumn Header="Mail erhalten" Binding="{Binding Received, StringFormat=dd.MM.yyyy HH:mm}" Width="115"/>
+                <DataGridTextColumn Header="Hinweise" Binding="{Binding Warnings}" Width="3*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <GridSplitter Grid.Row="3" HorizontalAlignment="Stretch" Background="#F0F0F0"/>
+
+        <!-- Scan log -->
+        <ListBox x:Name="LogList" Grid.Row="4" Margin="10,0,10,0" FontFamily="Consolas" FontSize="12" BorderBrush="#DDD">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Text}" Foreground="{Binding Brush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StatusBar Grid.Row="5" Margin="0,4,0,0">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText"/>
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <ProgressBar x:Name="Progress" Width="160" Height="12" IsIndeterminate="False" Visibility="Collapsed"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>

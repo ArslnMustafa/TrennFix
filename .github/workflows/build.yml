@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: OCR tools for the OCR test
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-deu poppler-utils fonts-liberation
+      - run: dotnet test tests/TrennFix.Core.Tests -c Release
+
+  windows-exe:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet publish src/TrennFix.App -c Release -o publish -p:DebugType=none
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TrennFix-win-x64
+          path: publish/TrennFix.exe
