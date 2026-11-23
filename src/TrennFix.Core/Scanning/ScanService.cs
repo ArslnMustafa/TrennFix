@@ -33,7 +33,8 @@ public sealed class ScanService(AppSettings settings, InvoiceDatabase db, IOcrEn
         var scanStart = DateTimeOffset.UtcNow;
 
         var extractor = new InvoiceExtractor(settings.ToExtractionOptions(), settings.OcrEnabled ? ocr : null);
-        var importer = new InvoiceImporter(extractor, db, settings.SaveOriginalMail, settings.PriceAlertPercent);
+        var importer = new InvoiceImporter(extractor, db, settings.SaveOriginalMail, settings.PriceAlertPercent,
+            new Pricing.ProductCatalog(db.GetPriceHistory(), db.GetProductOverrides()));
         var archiver = settings.AutoSaveDocuments ? new InvoiceArchiver(db, new ArchiveService(settings.ArchiveRoot)) : null;
 
         int seen = 0, skipped = 0, imported = 0, warnings = 0, errors = 0;

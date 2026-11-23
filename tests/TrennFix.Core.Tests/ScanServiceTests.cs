@@ -177,20 +177,35 @@ public sealed class ScanServiceTests : IDisposable
         var warning = Assert.Single(second.Warnings);
         Assert.StartsWith("Preiserhöhung: Toner HP 305A: 89,00 → 97,50 €", warning);
 
-        var summary = Export.PriceListExporter.Summarize(db.GetPriceHistory());
-        var toner = summary.Single(s => s.Description == "Toner HP 305A");
+        var groups = new Pricing.ProductCatalog(db.GetPriceHistory(), db.GetProductOverrides()).Groups();
+        var toner = groups.Single(g => g.Name == "Toner HP 305A");
         Assert.Equal(97.50m, toner.LastPrice);
-        Assert.Equal(89.00m, toner.PreviousPrice);
-        Assert.Equal(2, toner.Purchases);
+        Assert.Equal(89.00m, toner.Previous!.Line.UnitPrice);
+        Assert.Equal(2, toner.PurchaseCount);
         Assert.InRange(toner.ChangePercent!.Value, 9.5m, 9.6m);
-        Assert.Equal(0m, summary.Single(s => s.Description.StartsWith("Kopierpapier")).ChangePercent);
+        Assert.Equal(0m, groups.Single(g => g.Name.StartsWith("Kopierpapier")).ChangePercent);
+
+        // a third supplier sells the toner cheaper → hint on that supplier's next invoice
+        var other = SampleInvoices.Ueberweisung
+            .Replace("Bürobedarf Schneider GmbH", "Office Discount Müller GmbH")
+            .Replace("DE987654321", "DE222333444")
+            .Replace("RE-2026-10457", "OD-77")
+            .Replace("03.11.2026", "10.11.2026")
+            .Replace("DE90 1004 0000 0123 4567 89", "DE44 5001 0517 5407 3249 31");
+        mails.Add(Mail("<c@o>", "info@office-mueller.de", "Office Müller", DateTimeOffset.UtcNow.AddDays(-1), Pdf("c.pdf", other)));
+        mails.Add(Mail("<d@s>", "rechnung@buero-schneider.de", "Buchhaltung", DateTimeOffset.UtcNow, Pdf("d.pdf", later.Replace("RE-2026-12001", "RE-2026-12500").Replace("20.11.2026", "22.11.2026"))));
+        await service.RunAsync(new FakeMailbox(mails), ScanService.DefaultFrom(settings), null, new SyncProgress(_ => { }), CancellationToken.None);
+        var latest = db.GetInvoices().Single(i => i.Data.InvoiceNumber == "RE-2026-12500");
+        Assert.Contains(latest.Warnings, w => w.StartsWith("Anderswo günstiger: Toner HP 305A: bei Office Discount Müller GmbH"));
 
         var xlsx = Path.Combine(_dir.FullName, "preise.xlsx");
-        Export.PriceListExporter.Export(db.GetPriceHistory(), xlsx, settings.PriceAlertPercent);
+        groups = new Pricing.ProductCatalog(db.GetPriceHistory(), db.GetProductOverrides()).Groups();
+        Export.PriceListExporter.Export(groups, xlsx, settings.PriceAlertPercent);
         using var wb = new ClosedXML.Excel.XLWorkbook(xlsx);
-        Assert.Equal(["Preisvergleich", "Preiserhöhungen", "Preisverlauf"], wb.Worksheets.Select(w => w.Name));
+        Assert.Equal(["Preisvergleich", "Preiserhöhungen", "Einkäufe"], wb.Worksheets.Select(w => w.Name));
+        // only products bought more than once: toner + paper
+        Assert.Equal(2, wb.Worksheet("Preisvergleich").RangeUsed()!.RowCount() - 1);
         Assert.Equal("Toner HP 305A", wb.Worksheet("Preiserhöhungen").Cell(2, 1).GetString());
-        Assert.Equal(4, wb.Worksheet("Preisverlauf").RangeUsed()!.RowCount() - 1);
     }
 
     private sealed class SyncProgress(Action<ScanEvent> action) : IProgress<ScanEvent>

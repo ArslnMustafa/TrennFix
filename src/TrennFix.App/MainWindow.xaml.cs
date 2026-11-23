@@ -409,21 +409,13 @@ public partial class MainWindow : Window
 
     private void OnPriceList(object sender, RoutedEventArgs e)
     {
-        if (_db is null) return;
-        var history = _db.GetPriceHistory();
-        if (history.Count == 0)
+        if (_db is null || _cts is not null) return;
+        if (_db.GetPriceHistory().Count == 0)
         {
-            MessageBox.Show(this, "Es wurden noch keine Rechnungspositionen erkannt.", "Preisliste");
+            MessageBox.Show(this, "Es wurden noch keine Rechnungspositionen erkannt.", "Preisvergleich");
             return;
         }
-        var dlg = new SaveFileDialog
-        {
-            Filter = "Excel-Datei (*.xlsx)|*.xlsx",
-            FileName = $"Preisliste_{DateTime.Today:yyyy-MM-dd}.xlsx",
-        };
-        if (dlg.ShowDialog(this) != true) return;
-        PriceListExporter.Export(history, dlg.FileName, _settings.PriceAlertPercent);
-        ShellOpen(dlg.FileName);
+        new PriceComparisonWindow(_db, _settings.PriceAlertPercent) { Owner = this }.ShowDialog();
     }
 
     private void OnOpenArchive(object sender, RoutedEventArgs e) => ShellOpen(_settings.ArchiveRoot);

@@ -35,8 +35,8 @@
             <Button DockPanel.Dock="Right" Click="OnSettings" Margin="0">Einstellungen</Button>
             <Button DockPanel.Dock="Right" Click="OnOpenArchive">Archiv</Button>
             <Button DockPanel.Dock="Right" Click="OnExport">Excel-Export</Button>
-            <Button DockPanel.Dock="Right" Click="OnPriceList"
-                    ToolTip="Alle gekauften Artikel mit Preisverlauf, Preisvergleich und Preiserhöhungen als Excel-Datei">Preisliste</Button>
+            <Button DockPanel.Dock="Right" Click="OnPriceList" FontWeight="SemiBold"
+                    ToolTip="Gleiche Produkte aus verschiedenen Rechnungen und Lieferanten vergleichen">Preisvergleich</Button>
         </DockPanel>
 
         <!-- Filter -->

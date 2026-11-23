@@ -120,6 +120,11 @@ public sealed class InvoiceDatabase : IDisposable
             );
             CREATE INDEX IF NOT EXISTS ix_lines_invoice ON invoice_lines(invoice_id);
             CREATE INDEX IF NOT EXISTS ix_lines_item ON invoice_lines(item_key);
+            CREATE TABLE IF NOT EXISTS product_overrides (
+                member_key TEXT PRIMARY KEY,
+                group_key TEXT,
+                separate INTEGER NOT NULL DEFAULT 0
+            );
             """);
         // columns added in later versions
         EnsureColumn("invoices", "lines_verified", "INTEGER NOT NULL DEFAULT 0");
@@ -374,20 +379,30 @@ public sealed class InvoiceDatabase : IDisposable
 
     // ------------------------------------------------------------------ prices
 
-    /// <summary>Last known unit price of the same item from the same supplier (only from verified positions).</summary>
-    public (decimal Price, DateOnly? Date, string? InvoiceNumber)? FindLastPrice(long supplierId, string itemKey, string? unit, DateOnly onOrBefore, long excludeInvoiceId)
+    public List<Pricing.ProductOverride> GetProductOverrides()
     {
-        using var r = Query("""
-            SELECT l.unit_price, i.invoice_date, i.invoice_number
-            FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id
-            WHERE i.supplier_id = $s AND l.item_key = $k AND l.unit IS $u AND l.unit_price IS NOT NULL
-              AND i.lines_verified = 1 AND i.status != 2 AND i.id != $ex
-              AND COALESCE(i.invoice_date, substr(i.mail_received, 1, 10)) <= $d
-            ORDER BY COALESCE(i.invoice_date, substr(i.mail_received, 1, 10)) DESC, i.id DESC
-            LIMIT 1
-            """, ("$s", supplierId), ("$k", itemKey), ("$u", unit), ("$ex", excludeInvoiceId), ("$d", D(onOrBefore)));
-        if (!r.Read()) return null;
-        return (PM(r.GetString(0))!.Value, r.IsDBNull(1) ? null : PD(r.GetString(1)), r.IsDBNull(2) ? null : r.GetString(2));
+        var list = new List<Pricing.ProductOverride>();
+        using var r = Query("SELECT member_key, group_key, separate FROM product_overrides");
+        while (r.Read())
+            list.Add(new Pricing.ProductOverride(r.GetString(0), r.IsDBNull(1) ? null : r.GetString(1), r.GetInt32(2) == 1));
+        return list;
+    }
+
+    /// <summary>User says: these items are the same product.</summary>
+    public void MergeProducts(IEnumerable<string> memberKeys)
+    {
+        var keys = memberKeys.Distinct().ToList();
+        if (keys.Count < 2) return;
+        var group = "manual:" + Guid.NewGuid().ToString("N");
+        foreach (var k in keys)
+            Exec("INSERT OR REPLACE INTO product_overrides(member_key, group_key, separate) VALUES ($k, $g, 0)", ("$k", k), ("$g", group));
+    }
+
+    /// <summary>User says: these items are NOT the same as the rest of their product group.</summary>
+    public void SeparateProducts(IEnumerable<string> memberKeys)
+    {
+        foreach (var k in memberKeys.Distinct())
+            Exec("INSERT OR REPLACE INTO product_overrides(member_key, group_key, separate) VALUES ($k, NULL, 1)", ("$k", k));
     }
 
     /// <summary>All purchased positions (duplicates excluded) – the basis of the price list.</summary>
