@@ -10,7 +10,7 @@ namespace TrennFix.Core.Scanning;
 /// are kept in the database ("nicht gespeichert") until the user clicks "PDFs speichern"
 /// (see <see cref="InvoiceArchiver"/>), or right away when auto-save is switched on.
 /// </summary>
-public sealed class InvoiceImporter(InvoiceExtractor extractor, InvoiceDatabase db, bool saveOriginalMail)
+public sealed class InvoiceImporter(InvoiceExtractor extractor, InvoiceDatabase db, bool saveOriginalMail, decimal priceAlertPercent = 3m)
 {
     private readonly SupplierResolver _suppliers = new(db);
 
@@ -126,6 +126,8 @@ public sealed class InvoiceImporter(InvoiceExtractor extractor, InvoiceDatabase 
         if (data.Kind == DocumentKind.Unbekannt) record.Warnings.Add("Dokumenttyp nicht erkannt – ist das eine Rechnung?");
         if (data.Kind == DocumentKind.Mahnung) record.Warnings.Add("Mahnung/Zahlungserinnerung – prüfen, ob die Rechnung bereits bezahlt wurde.");
         if (SupplierResolver.CheckIban(supplier, data, isNew, db) is { } ibanWarning) record.Warnings.Add(ibanWarning);
+        if (duplicate is null && !isNew && PriceCheck.FindIncreases(db, supplier.Id, data, record.MailReceived, priceAlertPercent) is { Count: > 0 } increases)
+            record.Warnings.Add(PriceCheck.Describe(increases));
         if (duplicate is not null)
             record.Warnings.Add($"Doppelt: Rechnung {duplicate.Data.InvoiceNumber} wurde bereits am {duplicate.ImportedAt:dd.MM.yyyy} erfasst" +
                                (duplicate.IsSaved ? $" ({Path.GetFileName(duplicate.FilePath)})." : "."));

@@ -107,6 +107,7 @@ public partial class MainWindow : Window
         _cts = new CancellationTokenSource();
         SetBusy(true);
         _log.Clear();
+        BottomTabs.SelectedIndex = 1; // show the log while scanning
         _lastScanIds.Clear();
 
         var progress = new Progress<ScanEvent>(ev =>
@@ -242,6 +243,13 @@ public partial class MainWindow : Window
         var one = Selected.FirstOrDefault();
         MailButton.IsEnabled = one is not null && (one.Record.MailFilePath is { } p && File.Exists(p) || !one.Record.IsSaved);
         FolderButton.IsEnabled = one?.Record.IsSaved == true;
+
+        LinesGrid.ItemsSource = one?.Lines;
+        LinesInfo.Text = one is null || one.Lines.Count == 0
+            ? (one is null ? "" : "Keine Positionen erkannt.")
+            : $"{one.Lines.Count} Positionen, Summe {one.Lines.Sum(l => l.LineTotal ?? 0):N2} € – Netto laut Rechnung {one.Record.Data.NetAmount:N2} €" +
+              (one.Record.Data.LinesVerified ? "  ✓ stimmt überein" : "  ? weicht ab – Positionen bitte prüfen, sie lösen keine Preiswarnung aus");
+        if (_cts is null && one is not null) BottomTabs.SelectedIndex = 0;
         ConfirmIbanButton.Visibility = Selected.Any(r => r.Record.Warnings.Any(w => w.StartsWith("ACHTUNG: IBAN", StringComparison.Ordinal)))
             ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -396,6 +404,25 @@ public partial class MainWindow : Window
         if (dlg.ShowDialog(this) != true) return;
         var rows = _view!.Cast<InvoiceRow>().Select(r => r.Record).ToList();
         ExcelExporter.Export(rows, dlg.FileName);
+        ShellOpen(dlg.FileName);
+    }
+
+    private void OnPriceList(object sender, RoutedEventArgs e)
+    {
+        if (_db is null) return;
+        var history = _db.GetPriceHistory();
+        if (history.Count == 0)
+        {
+            MessageBox.Show(this, "Es wurden noch keine Rechnungspositionen erkannt.", "Preisliste");
+            return;
+        }
+        var dlg = new SaveFileDialog
+        {
+            Filter = "Excel-Datei (*.xlsx)|*.xlsx",
+            FileName = $"Preisliste_{DateTime.Today:yyyy-MM-dd}.xlsx",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        PriceListExporter.Export(history, dlg.FileName, _settings.PriceAlertPercent);
         ShellOpen(dlg.FileName);
     }
 

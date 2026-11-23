@@ -46,6 +46,9 @@ public sealed class InvoiceRow(InvoiceRecord record) : INotifyPropertyChanged
     public string Printed => Record.Printed ? "✓" : "";
     public string Saved => Record.IsSaved ? "✓" : "–";
     public bool IsSavedRow => Record.IsSaved;
+    /// <summary>"5 ✓" = 5 positions, sum matches the invoice total; "3 ?" = read, but please check.</summary>
+    public string LinesText => D.Lines.Count == 0 ? "" : $"{D.Lines.Count} {(D.LinesVerified ? "✓" : "?")}";
+    public IReadOnlyList<InvoiceLine> Lines => D.Lines;
     public DateTime Received => Record.MailReceived.LocalDateTime;
     public string Warnings => string.Join("  |  ", Record.Warnings);
     public string FileName => Path.GetFileName(Record.FilePath);
@@ -59,8 +62,12 @@ public sealed class InvoiceRow(InvoiceRecord record) : INotifyPropertyChanged
     public bool Matches(string search)
     {
         if (string.IsNullOrWhiteSpace(search)) return true;
+        var term = search.Trim();
         return new[] { Supplier, InvoiceNumber, Iban, Record.MailSubject, Record.MailFrom, Gross?.ToString("N2") ?? "", FileName }
-            .Any(s => s.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
+                   .Any(s => s.Contains(term, StringComparison.OrdinalIgnoreCase))
+               // also find invoices by product name / article number
+               || D.Lines.Any(l => l.Description.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                   || (l.ArticleNumber?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

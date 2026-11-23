@@ -73,6 +73,11 @@ public sealed class InvoiceData
     /// <summary>"XRechnung (CII)", "ZUGFeRD", "PDF" …</summary>
     public string? FormatName { get; set; }
 
+    /// <summary>Positions (Artikel / Leistungen) of the invoice.</summary>
+    public List<InvoiceLine> Lines { get; set; } = [];
+    /// <summary>True if the sum of the positions matches the net (or gross) total – the lines were read correctly.</summary>
+    public bool LinesVerified { get; set; }
+
     /// <summary>Raw text that was analysed (kept for full-text search / debugging).</summary>
     public string? RawText { get; set; }
 

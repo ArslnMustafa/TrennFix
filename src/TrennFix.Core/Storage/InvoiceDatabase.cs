@@ -104,7 +104,25 @@ public sealed class InvoiceDatabase : IDisposable
                 invoice_count INTEGER NOT NULL,
                 note TEXT
             );
+            CREATE TABLE IF NOT EXISTS invoice_lines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+                line_no INTEGER NOT NULL,
+                position TEXT,
+                article_number TEXT,
+                ean TEXT,
+                description TEXT NOT NULL,
+                item_key TEXT NOT NULL,
+                quantity TEXT,
+                unit TEXT,
+                unit_price TEXT,
+                line_total TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_lines_invoice ON invoice_lines(invoice_id);
+            CREATE INDEX IF NOT EXISTS ix_lines_item ON invoice_lines(item_key);
             """);
+        // columns added in later versions
+        EnsureColumn("invoices", "lines_verified", "INTEGER NOT NULL DEFAULT 0");
     }
 
     // ------------------------------------------------------------------ processed mails
@@ -180,6 +198,15 @@ public sealed class InvoiceDatabase : IDisposable
 
     public bool ShaExists(string sha256) => Scalar<long>("SELECT COUNT(*) FROM invoices WHERE file_sha256 = $s", ("$s", sha256)) > 0;
 
+    private void EnsureColumn(string table, string column, string definition)
+    {
+        var exists = false;
+        using (var r = Query($"PRAGMA table_info({table})"))
+            while (r.Read())
+                if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase)) exists = true;
+        if (!exists) Exec($"ALTER TABLE {table} ADD COLUMN {column} {definition}");
+    }
+
     public long InsertInvoice(InvoiceRecord r)
     {
         var d = r.Data;
@@ -201,6 +228,17 @@ public sealed class InvoiceDatabase : IDisposable
             ("$file", r.FilePath), ("$xml", r.XmlFilePath), ("$mail", r.MailFilePath), ("$sha", r.FileSha256),
             ("$orig", r.OriginalFileName), ("$mid", r.MailMessageId), ("$subj", r.MailSubject), ("$from", r.MailFrom),
             ("$recv", r.MailReceived.ToString("O")), ("$imp", r.ImportedAt.ToString("O")), ("$printed", r.Printed ? 1 : 0), ("$raw", d.RawText));
+        Exec("UPDATE invoices SET lines_verified = $v WHERE id = $id", ("$id", r.Id), ("$v", d.LinesVerified ? 1 : 0));
+        for (var i = 0; i < d.Lines.Count; i++)
+        {
+            var l = d.Lines[i];
+            Exec("""
+                INSERT INTO invoice_lines(invoice_id, line_no, position, article_number, ean, description, item_key, quantity, unit, unit_price, line_total)
+                VALUES ($inv, $no, $pos, $art, $ean, $desc, $key, $qty, $unit, $price, $total)
+                """, ("$inv", r.Id), ("$no", i), ("$pos", l.Position), ("$art", l.ArticleNumber), ("$ean", l.Ean),
+                ("$desc", l.Description), ("$key", l.ItemKey), ("$qty", M(l.Quantity)), ("$unit", l.Unit),
+                ("$price", M(l.UnitPrice)), ("$total", M(l.LineTotal)));
+        }
         return r.Id;
     }
 
@@ -276,7 +314,7 @@ public sealed class InvoiceDatabase : IDisposable
                    i.seller_tax_number, i.net_amount, i.tax_amount, i.gross_amount, i.currency, i.payment_method, i.iban, i.bic,
                    i.payment_reference, i.mandate_reference, i.creditor_id, i.discount_terms, i.kind, i.source, i.format_name,
                    i.status, i.warnings, i.file_path, i.xml_file_path, i.mail_file_path, i.file_sha256, i.original_file_name,
-                   i.mail_message_id, i.mail_subject, i.mail_from, i.mail_received, i.imported_at, i.printed
+                   i.mail_message_id, i.mail_subject, i.mail_from, i.mail_received, i.imported_at, i.printed, i.lines_verified
             FROM invoices i JOIN suppliers s ON s.id = i.supplier_id
             {where}
             ORDER BY i.mail_received DESC, i.id DESC
@@ -304,10 +342,60 @@ public sealed class InvoiceDatabase : IDisposable
                 ImportedAt = DateTimeOffset.Parse(r.GetString(34), CultureInfo.InvariantCulture), Printed = r.GetInt32(35) == 1,
             };
             rec.Warnings.AddRange(JsonSerializer.Deserialize<List<string>>(r.GetString(24)) ?? []);
+            rec.Data.LinesVerified = r.GetInt32(36) == 1;
             list.Add(rec);
         }
+        r.Close();
+        LoadLines(list);
         return list;
     }
+
+    private void LoadLines(List<InvoiceRecord> invoices)
+    {
+        if (invoices.Count == 0) return;
+        var byId = invoices.ToDictionary(i => i.Id);
+        // one query for all (or a filtered list of) invoices
+        var filter = invoices.Count <= 500 ? $"WHERE invoice_id IN ({string.Join(',', byId.Keys)})" : "";
+        using var r = Query($"""
+            SELECT invoice_id, position, article_number, ean, description, quantity, unit, unit_price, line_total
+            FROM invoice_lines {filter} ORDER BY invoice_id, line_no
+            """);
+        while (r.Read())
+        {
+            if (!byId.TryGetValue(r.GetInt64(0), out var inv)) continue;
+            string? S(int i) => r.IsDBNull(i) ? null : r.GetString(i);
+            inv.Data.Lines.Add(new InvoiceLine
+            {
+                Position = S(1), ArticleNumber = S(2), Ean = S(3), Description = r.GetString(4),
+                Quantity = PM(S(5)), Unit = S(6), UnitPrice = PM(S(7)), LineTotal = PM(S(8)),
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------ prices
+
+    /// <summary>Last known unit price of the same item from the same supplier (only from verified positions).</summary>
+    public (decimal Price, DateOnly? Date, string? InvoiceNumber)? FindLastPrice(long supplierId, string itemKey, string? unit, DateOnly onOrBefore, long excludeInvoiceId)
+    {
+        using var r = Query("""
+            SELECT l.unit_price, i.invoice_date, i.invoice_number
+            FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id
+            WHERE i.supplier_id = $s AND l.item_key = $k AND l.unit IS $u AND l.unit_price IS NOT NULL
+              AND i.lines_verified = 1 AND i.status != 2 AND i.id != $ex
+              AND COALESCE(i.invoice_date, substr(i.mail_received, 1, 10)) <= $d
+            ORDER BY COALESCE(i.invoice_date, substr(i.mail_received, 1, 10)) DESC, i.id DESC
+            LIMIT 1
+            """, ("$s", supplierId), ("$k", itemKey), ("$u", unit), ("$ex", excludeInvoiceId), ("$d", D(onOrBefore)));
+        if (!r.Read()) return null;
+        return (PM(r.GetString(0))!.Value, r.IsDBNull(1) ? null : PD(r.GetString(1)), r.IsDBNull(2) ? null : r.GetString(2));
+    }
+
+    /// <summary>All purchased positions (duplicates excluded) – the basis of the price list.</summary>
+    public List<PriceHistoryEntry> GetPriceHistory() =>
+        GetInvoices("WHERE i.status != 2")
+            .SelectMany(inv => inv.Data.Lines.Select(l => new PriceHistoryEntry(
+                inv.Id, inv.SupplierId, inv.SupplierName, inv.Data.InvoiceNumber, inv.Data.InvoiceDate, inv.MailReceived, l, inv.Data.LinesVerified)))
+            .ToList();
 
     // ------------------------------------------------------------------ helpers
 

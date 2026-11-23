@@ -65,6 +65,8 @@ public sealed class AppSettings
     public bool SaveOriginalMail { get; set; } = true;
     /// <summary>false (default): invoices are only listed, the "PDFs speichern" button writes them to the archive.</summary>
     public bool AutoSaveDocuments { get; set; }
+    /// <summary>Warn when an item costs more than this percentage above the last purchase.</summary>
+    public decimal PriceAlertPercent { get; set; } = 3m;
     public bool OcrEnabled { get; set; } = true;
     public string OcrLanguage { get; set; } = "de-DE";
 

@@ -47,6 +47,7 @@ public sealed partial class TextInvoiceParser(ExtractionOptions options)
         data.PaymentMethod = DetectPaymentMethod(text, data, ownIbanPrinted);
 
         data.SellerName = FindSellerName(lines);
+        (data.Lines, data.LinesVerified) = LineItemParser.Parse(lines, data.NetAmount, data.GrossAmount);
         return data;
     }
 

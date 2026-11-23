@@ -139,6 +139,60 @@ public sealed class ScanServiceTests : IDisposable
         Assert.True(new FileInfo(xlsx).Length > 1000);
     }
 
+    [Fact]
+    public async Task Detects_price_increase_and_exports_price_list()
+    {
+        var settings = new AppSettings
+        {
+            ArchiveRoot = Path.Combine(_dir.FullName, "Rechnungen"),
+            InitialScanFrom = DateTimeOffset.UtcNow.AddDays(-60),
+            OwnCompanyNames = [SampleInvoices.OwnCompany],
+            OwnIbans = [SampleInvoices.OwnIban],
+            SaveOriginalMail = false,
+            PriceAlertPercent = 3m,
+        };
+        var later = SampleInvoices.Ueberweisung
+            .Replace("RE-2026-10457", "RE-2026-12001")
+            .Replace("03.11.2026", "20.11.2026")
+            .Replace("2         89,00        178,00", "2         97,50        195,00")
+            .Replace("227,90 €", "244,90 €")
+            .Replace("43,30 €", "46,53 €")
+            .Replace("271,20 €", "291,43 €");
+        var mails = new List<MailItem>
+        {
+            Mail("<a@s>", "rechnung@buero-schneider.de", "Buchhaltung", DateTimeOffset.UtcNow.AddDays(-20), Pdf("a.pdf", SampleInvoices.Ueberweisung)),
+            Mail("<b@s>", "rechnung@buero-schneider.de", "Buchhaltung", DateTimeOffset.UtcNow.AddDays(-2), Pdf("b.pdf", later)),
+        };
+
+        using var db = new InvoiceDatabase(settings.DatabasePath);
+        var service = new ScanService(settings, db, ocr: null, _ => { });
+        await service.RunAsync(new FakeMailbox(mails), ScanService.DefaultFrom(settings), null, new SyncProgress(_ => { }), CancellationToken.None);
+
+        var invoices = db.GetInvoices();
+        var first = invoices.Single(i => i.Data.InvoiceNumber == "RE-2026-10457");
+        var second = invoices.Single(i => i.Data.InvoiceNumber == "RE-2026-12001");
+        Assert.Equal(2, first.Data.Lines.Count); // lines survive the database round trip
+        Assert.True(second.Data.LinesVerified);
+        Assert.Equal(InvoiceStatus.Pruefen, second.Status);
+        var warning = Assert.Single(second.Warnings);
+        Assert.StartsWith("Preiserhöhung: Toner HP 305A: 89,00 → 97,50 €", warning);
+
+        var summary = Export.PriceListExporter.Summarize(db.GetPriceHistory());
+        var toner = summary.Single(s => s.Description == "Toner HP 305A");
+        Assert.Equal(97.50m, toner.LastPrice);
+        Assert.Equal(89.00m, toner.PreviousPrice);
+        Assert.Equal(2, toner.Purchases);
+        Assert.InRange(toner.ChangePercent!.Value, 9.5m, 9.6m);
+        Assert.Equal(0m, summary.Single(s => s.Description.StartsWith("Kopierpapier")).ChangePercent);
+
+        var xlsx = Path.Combine(_dir.FullName, "preise.xlsx");
+        Export.PriceListExporter.Export(db.GetPriceHistory(), xlsx, settings.PriceAlertPercent);
+        using var wb = new ClosedXML.Excel.XLWorkbook(xlsx);
+        Assert.Equal(["Preisvergleich", "Preiserhöhungen", "Preisverlauf"], wb.Worksheets.Select(w => w.Name));
+        Assert.Equal("Toner HP 305A", wb.Worksheet("Preiserhöhungen").Cell(2, 1).GetString());
+        Assert.Equal(4, wb.Worksheet("Preisverlauf").RangeUsed()!.RowCount() - 1);
+    }
+
     private sealed class SyncProgress(Action<ScanEvent> action) : IProgress<ScanEvent>
     {
         public void Report(ScanEvent value) => action(value);

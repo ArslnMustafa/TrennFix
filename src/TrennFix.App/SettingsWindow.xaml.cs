@@ -34,6 +34,7 @@ public partial class SettingsWindow : Window
         ArchiveRoot.Text = _s.ArchiveRoot;
         SaveMail.IsChecked = _s.SaveOriginalMail;
         AutoSave.IsChecked = _s.AutoSaveDocuments;
+        PriceAlert.Text = _s.PriceAlertPercent.ToString("0.##", System.Globalization.CultureInfo.GetCultureInfo("de-DE"));
         OcrEnabled.IsChecked = _s.OcrEnabled;
         InitialFrom.SelectedDate = _s.InitialScanFrom.LocalDateTime.Date;
         LastScanInfo.Text = _s.LastScanUtc is { } ls ? $"Letzter Abruf: {ls.LocalDateTime:dd.MM.yyyy HH:mm}" : "Noch kein Abruf.";
@@ -105,6 +106,9 @@ public partial class SettingsWindow : Window
         _s.ArchiveRoot = ArchiveRoot.Text.Trim();
         _s.SaveOriginalMail = SaveMail.IsChecked == true;
         _s.AutoSaveDocuments = AutoSave.IsChecked == true;
+        if (decimal.TryParse(PriceAlert.Text.Replace('.', ','), System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.GetCultureInfo("de-DE"), out var pct) && pct >= 0)
+            _s.PriceAlertPercent = pct;
         _s.OcrEnabled = OcrEnabled.IsChecked == true;
         if (InitialFrom.SelectedDate is { } d) _s.InitialScanFrom = new DateTimeOffset(d);
 

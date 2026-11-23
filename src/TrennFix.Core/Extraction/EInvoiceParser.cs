@@ -84,6 +84,29 @@ public static class EInvoiceParser
         // For direct debit the XML carries the *debtor* account (ours) – never treat that as supplier IBAN.
         if (data.Iban is not null && options.IsOwnIban(data.Iban)) data.Iban = null;
 
+        foreach (var item in d.TradeLineItems ?? [])
+        {
+            object? unitCode = item.UnitCode;
+            decimal? qty = item.BilledQuantity;
+            decimal? price = item.NetUnitPrice;
+            decimal? total = item.LineTotalAmount;
+            var gid = item.GlobalID;
+            var scheme = gid?.SchemeID.ToString() ?? "";
+            data.Lines.Add(new InvoiceLine
+            {
+                Position = item.AssociatedDocument?.LineID,
+                ArticleNumber = string.IsNullOrWhiteSpace(item.SellerAssignedID) ? null : item.SellerAssignedID.Trim(),
+                Ean = gid?.ID is { Length: > 0 } gtin && (scheme.Contains("GTIN", StringComparison.OrdinalIgnoreCase) || scheme.Contains("EAN", StringComparison.OrdinalIgnoreCase) || scheme == "0160") ? gtin : null,
+                Description = (item.Name ?? item.Description ?? "").Trim(),
+                Quantity = qty,
+                Unit = LineItemParser.NormalizeUnit(unitCode?.ToString()),
+                UnitPrice = price,
+                LineTotal = total ?? (qty is { } q && price is { } p ? q * p : null),
+            });
+        }
+        // Structured data – the positions are exact by definition.
+        data.LinesVerified = data.Lines.Count > 0;
+
         var typeName = d.Type.ToString();
         data.Kind = typeName.Contains("Credit", StringComparison.OrdinalIgnoreCase) ? DocumentKind.Gutschrift : DocumentKind.Rechnung;
         return data;

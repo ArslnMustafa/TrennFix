@@ -35,6 +35,8 @@
             <Button DockPanel.Dock="Right" Click="OnSettings" Margin="0">Einstellungen</Button>
             <Button DockPanel.Dock="Right" Click="OnOpenArchive">Archiv</Button>
             <Button DockPanel.Dock="Right" Click="OnExport">Excel-Export</Button>
+            <Button DockPanel.Dock="Right" Click="OnPriceList"
+                    ToolTip="Alle gekauften Artikel mit Preisverlauf, Preisvergleich und Preiserhöhungen als Excel-Datei">Preisliste</Button>
         </DockPanel>
 
         <!-- Filter -->
@@ -103,6 +105,7 @@
                 <DataGridTextColumn Header="Zahlungsart" Binding="{Binding Payment}" Width="105"/>
                 <DataGridTextColumn Header="IBAN" Binding="{Binding Iban}" Width="1.6*"/>
                 <DataGridTextColumn Header="Quelle" Binding="{Binding Source}" Width="75"/>
+                <DataGridTextColumn Header="Positionen" Binding="{Binding LinesText}" Width="80"/>
                 <DataGridTextColumn Header="Gespeichert" Binding="{Binding Saved}" Width="80"/>
                 <DataGridTextColumn Header="Druck" Binding="{Binding Printed}" Width="45"/>
                 <DataGridTextColumn Header="Mail erhalten" Binding="{Binding Received, StringFormat=dd.MM.yyyy HH:mm}" Width="115"/>
@@ -112,14 +115,35 @@
 
         <GridSplitter Grid.Row="3" HorizontalAlignment="Stretch" Background="#F0F0F0"/>
 
-        <!-- Scan log -->
-        <ListBox x:Name="LogList" Grid.Row="4" Margin="10,0,10,0" FontFamily="Consolas" FontSize="12" BorderBrush="#DDD">
-            <ListBox.ItemTemplate>
-                <DataTemplate>
-                    <TextBlock Text="{Binding Text}" Foreground="{Binding Brush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+        <!-- Bottom: positions of the selected invoice / scan log -->
+        <TabControl x:Name="BottomTabs" Grid.Row="4" Margin="10,0,10,0">
+            <TabItem Header="Positionen der Rechnung">
+                <DockPanel>
+                    <TextBlock x:Name="LinesInfo" DockPanel.Dock="Bottom" Margin="4,3" Foreground="Gray"/>
+                    <DataGrid x:Name="LinesGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#EEE" CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Pos." Binding="{Binding Position}" Width="45"/>
+                            <DataGridTextColumn Header="Art.-Nr." Binding="{Binding ArticleNumber}" Width="110"/>
+                            <DataGridTextColumn Header="Bezeichnung" Binding="{Binding Description}" Width="*"/>
+                            <DataGridTextColumn Header="Menge" Binding="{Binding Quantity, StringFormat=0.###, ConverterCulture=de-DE}" Width="70"/>
+                            <DataGridTextColumn Header="Einheit" Binding="{Binding Unit}" Width="70"/>
+                            <DataGridTextColumn Header="Einzelpreis" Binding="{Binding UnitPrice, StringFormat=#\,##0.00##, ConverterCulture=de-DE}" Width="90"/>
+                            <DataGridTextColumn Header="Gesamt" Binding="{Binding LineTotal, StringFormat=N2, ConverterCulture=de-DE}" Width="90"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
+            <TabItem Header="Protokoll">
+                <ListBox x:Name="LogList" FontFamily="Consolas" FontSize="12" BorderThickness="0">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Text}" Foreground="{Binding Brush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </TabItem>
+        </TabControl>
 
         <StatusBar Grid.Row="5" Margin="0,4,0,0">
             <StatusBarItem>

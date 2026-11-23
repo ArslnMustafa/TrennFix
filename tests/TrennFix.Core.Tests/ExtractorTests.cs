@@ -25,6 +25,8 @@ public class ExtractorTests
         Assert.Equal(71.34m, d.GrossAmount);
         Assert.Equal(PaymentMethod.Lastschrift, d.PaymentMethod);
         Assert.Equal("NetzFunk Telekommunikation AG", d.SellerName);
+        Assert.True(d.LinesVerified);
+        Assert.Equal(["Business Flat L", "Zusatzoption Festnetz"], d.Lines.Select(l => l.Description));
     }
 
     [Fact]
@@ -38,6 +40,11 @@ public class ExtractorTests
         Assert.Equal(PaymentMethod.Ueberweisung, d.PaymentMethod);
         Assert.Equal("DE90100400000123456789", d.Iban);
         Assert.Equal("Bürobedarf Schneider GmbH", d.SellerName);
+
+        Assert.True(d.LinesVerified);
+        Assert.Equal(["Kopierpapier A4, 500 Blatt", "Toner HP 305A"], d.Lines.Select(l => l.Description));
+        Assert.Equal(4.99m, d.Lines[0].UnitPrice);
+        Assert.Equal(10m, d.Lines[0].Quantity);
     }
 
     [Fact]
@@ -59,6 +66,11 @@ public class ExtractorTests
         Assert.Equal(271.20m, d.GrossAmount);
         Assert.Equal(PaymentMethod.Ueberweisung, d.PaymentMethod);
         Assert.Equal("DE90100400000123456789", d.Iban);
+
+        // positions also from OCR text
+        Assert.True(d.LinesVerified, string.Join("\n", d.Lines.Select(l => $"{l.Description} | {l.Quantity} | {l.UnitPrice} | {l.LineTotal}")));
+        Assert.Equal(2, d.Lines.Count);
+        Assert.Equal(89.00m, d.Lines[1].UnitPrice);
     }
 
     [Theory]
@@ -97,6 +109,11 @@ public class ExtractorTests
         Assert.Equal("DE777888999", d.SellerVatId);
         Assert.Equal("Stadtwerke Beispielstadt GmbH", d.SellerName);
         Assert.Null(d.Iban);
+        var line = Assert.Single(d.Lines);
+        Assert.Equal("Strom Oktober", line.Description);
+        Assert.Equal(100m, line.UnitPrice);
+        Assert.Equal("Stk", line.Unit);
+        Assert.True(d.LinesVerified);
     }
 
     private static async Task<byte[]> ImageOnlyPdf(byte[] pdf)
